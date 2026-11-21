@@ -1,0 +1,43 @@
+import { root, product } from "../../scripts/workspace.mjs";
+// Focused shared-shell navigation with synthetic APIs; no screenshots.
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {createRequire} from 'node:module';
+import {join} from 'node:path';
+const web=join(product,'web');
+const {chromium,expect}=createRequire(join(root,'repositories/odyssey-design/packages/odyssey-web-testkit/package.json'))('@playwright/test');
+const base=process.env.AIOPS_WEB_BASE??'/';
+const outDir=process.env.AIOPS_TEST_WEB_DIST;
+const server=spawn(join(web,'node_modules/.bin/vite'),['preview','--port','0',...(outDir?['--outDir',outDir]:[])],{cwd:web,stdio:['ignore','pipe','inherit']});
+const closed=once(server,'close');let ready;const started=new Promise(resolve=>{ready=resolve;});
+server.stdout.on('data',chunk=>{const match=String(chunk).match(/http:\/\/127\.0\.0\.1:\d+/);if(match)ready(match[0]);});
+let browser;
+try {
+ const origin=await Promise.race([started,new Promise((_,reject)=>setTimeout(()=>reject(Error('preview timeout')),20000).unref())]);
+ browser=await chromium.launch();const page=await browser.newPage({viewport:{width:1440,height:1000}});const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.route('**/api/**',route=>route.fulfill({json:route.request().url().includes('/go1')?{tasks:[],models:[],environment:null,activity:{active:null,queued:[]}}:route.request().url().includes('/training')?{datasets:[],tasks:[],job:null,active:null}:[]}));
+ const nav=surface=>page.locator(`[data-od-slot="pro-admin-navigation"][data-od-navigation-surface="${surface}"]`);
+ await page.goto(origin+base+'?course=random-map-v1&tab=datasets#map');
+ await expect(page).toHaveURL(url=>url.pathname===base+'maze/datasets');
+ assert.equal(new URL(page.url()).hash,'#map');
+ assert.equal(new URL(page.url()).searchParams.has('tab'),false);
+ await page.getByRole('tab',{name:'实验',exact:true}).click();
+ await expect(page).toHaveURL(url=>url.pathname===base+'maze');
+ await expect(nav('sidebar').getByRole('button',{name:'第二课：随机地图',exact:true})).toHaveAttribute('aria-current','page');
+ const fixed=nav('sidebar').getByRole('button',{name:'第一课：固定地图',exact:true});await fixed.focus();await fixed.press('Enter');
+ await expect(fixed).toHaveAttribute('aria-current','page');await expect(page).toHaveURL(/course=fixed-map-v1/);
+ await nav('desktop').getByRole('button',{name:'Go1',exact:true}).click();await expect(page).toHaveURL(/\/go1\/training(?:[?#]|$)/);
+ await expect(nav('desktop').getByRole('button',{name:'Go1',exact:true})).toHaveAttribute('aria-current','page');
+ await nav('sidebar').getByRole('button',{name:'模型',exact:true}).click();await expect(page).toHaveURL(/\/go1\/models(?:[?#]|$)/);
+ await expect(nav('sidebar').getByRole('button',{name:'模型',exact:true})).toHaveAttribute('aria-current','page');
+ await nav('desktop').getByRole('button',{name:'Maze',exact:true}).click();
+ await page.setViewportSize({width:390,height:844});await page.locator('[data-od-slot="pro-admin-mobile-trigger"]').click();
+ await nav('mobile').getByRole('button',{name:'第四课：模型记忆',exact:true}).click();
+ await expect(page.locator('[data-od-slot="pro-admin-mobile-drawer"]')).toBeHidden();await expect(page).toHaveURL(/course=memory-map-v1/);
+ await page.locator('[data-od-slot="pro-admin-mobile-trigger"]').click();
+ await expect(nav('mobile').getByRole('button',{name:'第四课：模型记忆',exact:true})).toHaveAttribute('aria-current','page');
+ await nav('mobile').getByRole('button',{name:'Go1',exact:true}).click();await expect(page).toHaveURL(/\/go1\/training(?:[?#]|$)/);
+ await expect(page.locator('[data-od-slot="pro-admin-mobile-drawer"]')).toBeHidden();assert.deepEqual(errors,[]);
+ console.log('PASS shared menu desktop/keyboard/course/module/Go1 section and mobile drawer selection/close/highlight');
+} finally {await browser?.close();server.kill();await closed;}

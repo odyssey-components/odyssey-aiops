@@ -1,0 +1,83 @@
+import { root, product } from "../../scripts/workspace.mjs";
+// Product-owned synthetic training UI and actual Python workers, without capture.
+import assert from 'node:assert/strict';
+import {startGoAPI} from './go-api.mjs';
+import TOML from '@iarna/toml';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import { join } from 'node:path';
+const web=join(product,'web');
+const {chromium,expect}=createRequire(join(root,'repositories/odyssey-design/packages/odyssey-web-testkit/package.json'))('@playwright/test');
+await mkdir(join(root,'tmp/odymaze-web-training'),{recursive:true});
+const run=await mkdtemp(join(root,'tmp/odymaze-web-training/browser-'));
+const api=await startGoAPI(root,run,process.env.HOME+'/.odyssey/odymaze/python/bin/python');
+const server=spawn(join(web,'node_modules/.bin/vite'),['preview','--port','0'],{cwd:web,env:{...process.env,HOME:run,ODYMAZE_API_ORIGIN:api.origin,NO_COLOR:'1'},stdio:['ignore','pipe','inherit']});
+const closed=once(server,'close');
+let resolveOrigin;const ready=new Promise(resolve=>{resolveOrigin=resolve;});
+server.stdout.on('data',chunk=>{const found=String(chunk).match(/http:\/\/127\.0\.0\.1:\d+/);if(found)resolveOrigin(found[0]);});
+let browser;
+try {
+ const origin=await ready;browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1440,height:1000}});
+ const errors=[];page.on('pageerror',error=>errors.push(error.message));
+ for(const course of ['fixed-map-v1','random-map-v1','local-map-v1','memory-map-v1']) {
+  await page.goto(`${origin}/?course=${course}&tab=training`);await page.waitForLoadState('networkidle');
+  await expect(page.getByRole('tab',{name:'训练任务',exact:true})).toHaveAttribute('aria-selected','true');
+  await expect(page.getByRole('table',{name:'本课训练任务列表'})).toBeVisible();
+  await expect(page.locator('#start-training')).toHaveCount(0);
+  await page.getByRole('tab',{name:'地图组',exact:true}).click();
+  await page.locator('#add-dataset').click();
+  if(course!=='fixed-map-v1') await page.locator('#training-maps').fill('16');
+  await page.locator('#dataset-title').fill('课堂地图组 '+course);
+  await page.locator('#dataset-description').fill('用于预生成地图训练的回归说明');
+  await expect(page.locator('#prepare-dataset')).toBeEnabled();await page.locator('#prepare-dataset').click();
+  await expect(page.locator('#dataset-status')).toContainText('地图组已添加',{timeout:60000});
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await page.getByRole('tab',{name:'训练任务',exact:true}).click();
+  await page.locator('#add-training-task').click();
+  await expect(page.locator('#dataset-summary')).toContainText(`训练 ${course==='fixed-map-v1'?1:16} 张`);
+  const before=await (await page.request.get(`${origin}/api/training?course=${course}`)).json();const dataset=before.datasets[0];
+  const path=join(run,'.odyssey/odymaze/datasets',dataset.id+'.jsonl'),source=await readFile(path,'utf8');
+  await page.locator('#training-epochs').fill('3');await page.locator('#start-training').click();
+  await expect(page.locator('#training-status')).toContainText('模型训练：已完成',{timeout:60000});
+  assert.equal(await readFile(path,'utf8'),source);
+  const metadata=TOML.parse(await readFile(path.replace('.jsonl','.toml'),'utf8'));assert.equal(metadata.lesson,course);assert.equal(metadata.description,'用于预生成地图训练的回归说明');
+
+  const after=await (await page.request.get(`${origin}/api/training?course=${course}`)).json();assert.ok(after.job.run);
+  assert.deepEqual(after.job.metrics.map(point=>point.epoch),[0,1,2,3]);
+  assert.ok(after.job.metrics.every(point=>point.split===(course==='fixed-map-v1'?'fixed':'validation')&&point.evaluatedMaps===(course==='fixed-map-v1'?1:64)));
+  assert.ok(!after.job.logs.includes('ODYMAZE_METRIC'));
+  const report=JSON.parse(await readFile(join(run,'.odyssey/odymaze/runs',after.job.run,'report.json'),'utf8'));
+  assert.deepEqual(after.job.metrics.map(point=>point.successRate),report.validation.map(point=>point.success_rate));
+  await expect(page.locator('#success-chart')).toHaveAttribute('aria-label',/共4个实测点/);
+  const line=await page.locator('#success-line').getAttribute('points');assert.equal(line.trim().split(/\s+/).length,4);
+  await page.locator('#success-epoch').getByRole('slider').focus();await page.keyboard.press('Home');
+  await expect(page.locator('#success-detail')).toContainText('第 0 / 3 轮');
+  await page.keyboard.press('End');await expect(page.locator('#success-detail')).toContainText('第 3 / 3 轮');
+  const download=page.waitForEvent('download');await page.getByRole('button',{name:'导出 CSV',exact:true}).click();
+  const csv=await download;const csvPath=join(run,course+'-curve.csv');await csv.saveAs(csvPath);
+  const rows=(await readFile(csvPath,'utf8')).trim().replace(/^\uFEFF/,'').split('\n');assert.equal(rows.length,5);
+  assert.deepEqual(rows.slice(1).map(row=>Number(row.split(',')[2])),after.job.metrics.map(point=>point.successRate));
+  await page.reload();await page.waitForLoadState('networkidle');
+  await expect(page.locator('#success-chart')).toHaveAttribute('aria-label',/共4个实测点/);
+
+  await page.getByRole('tab',{name:'实验',exact:true}).click();
+  await expect(page.locator('#model-list')).toContainText(after.job.run,{timeout:20000});
+  await expect(page.locator('#current-model')).toContainText(after.job.run,{timeout:20000});
+  await expect(page.locator('#mode-model')).toBeEnabled();
+  console.log('PASS browser prepare → train → catalog/current model',course);
+ }
+ await page.goto(`${origin}/?course=random-map-v1&tab=training`);await page.waitForLoadState('networkidle');
+ await page.locator('#add-training-task').click();
+ await page.locator('#training-epochs').fill('1000');await page.locator('#start-training').click();
+ await expect(page.locator('#cancel-training')).toBeVisible();
+ const active=await (await page.request.get(`${origin}/api/training?course=random-map-v1`)).json();
+ await page.reload();await page.waitForLoadState('networkidle');
+ const restored=await (await page.request.get(`${origin}/api/training?course=random-map-v1`)).json();assert.equal(restored.active.id,active.active.id);
+ await page.locator('#cancel-training').click();await expect(page.locator('#training-status')).toContainText('模型训练：已取消',{timeout:15000});
+ await page.setViewportSize({width:390,height:844});
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+ assert.deepEqual(errors,[]);
+ console.log('PASS task refresh recovery, explicit cancellation and narrow training layout');
+} finally {await browser?.close();server.kill();await closed;await api.close();console.log('Synthetic training run:',run);}

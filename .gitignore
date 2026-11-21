@@ -1,0 +1,11 @@
+node_modules/
+/dist/
+web/dist/
+web/.vite/
+.tanstack/
+.venv/
+__pycache__/
+*.py[cod]
+/tmp/
+.env
+.env.*

@@ -1,0 +1,24 @@
+[project]
+name = "aiops-go1-training"
+version = "0.1.0"
+description = "Independent Go1 MJX PPO training package"
+requires-python = "==3.14.*"
+dependencies = ["odylab-training>=0.1.0", "numpy>=2", "odyssey-config", "pydantic>=2,<3"]
+
+[project.optional-dependencies]
+import-policy = ["torch>=2.6"]
+policy-oracle = ["stable-baselines3>=2.3,<3", "torch>=2.6"]
+cpu = ["jax>=0.4.35", "mujoco>=3.3", "mujoco-mjx>=3.3", "PyOpenGL>=3.1"]
+simulation = ["mcap>=1.6,<2", "jax>=0.4.35", "mujoco>=3.3", "PyOpenGL>=3.1"]
+gpu = ["jax[cuda12]>=0.4.35", "mujoco>=3.3", "mujoco-mjx>=3.3", "PyOpenGL>=3.1"]
+
+[project.scripts]
+aiops-go1-train = "aiops_go1_training.runtime.local:main"
+aiops-go1-vision = "aiops_go1_training.vision.train:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "aiops_go1_training"

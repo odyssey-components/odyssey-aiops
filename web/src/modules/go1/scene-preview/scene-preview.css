@@ -1,0 +1,24 @@
+.training-workspace.go1-scene-detail { display:flex; flex-direction:column; gap:16px; min-width:0; }
+.go1-scene-detail .dataset-heading { flex-wrap:wrap; }
+.go1-scene-detail .training-actions { align-items:center; gap:8px; }
+.go1-scene-facts { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px 24px; margin:0; }
+.go1-scene-facts > div { min-width:0; overflow-wrap:anywhere; }
+.go1-scene-facts dt { color:var(--od-muted-foreground); }
+.go1-scene-facts dd { margin:4px 0 0; }
+.go1-scene-facts .go1-scene-parameters { grid-column:span 2; }
+.go1-scene-facts .go1-scene-success { grid-column:1 / -1; }
+.go1-scene-preview { min-width:0; }
+.go1-scene-preview-surface { position:relative; min-width:0; overflow:hidden; border-radius:8px; }
+.go1-scene-canvas { width:100%; height:clamp(320px,60dvh,720px); overflow:hidden; }
+.go1-scene-canvas canvas { display:block; }
+.go1-scene-viewport-actions { position:absolute; top:12px; right:12px; display:flex; align-items:center; }
+.go1-scene-viewport-actions button { flex:none; }
+@media(max-width:600px) {
+ .go1-scene-facts { grid-template-columns:1fr; gap:12px; }
+ .go1-scene-facts .go1-scene-parameters { grid-column:auto; }
+ .go1-scene-detail .dataset-heading { align-items:flex-start; }
+ .go1-scene-detail .dataset-heading .training-actions { width:100%; }
+ .go1-scene-canvas { height:clamp(300px,48dvh,480px); }
+}
+
+.go1-scene-view-dialog { width:min(1200px,calc(100vw - 32px)); max-width:calc(100vw - 32px); max-height:calc(100dvh - 32px); overflow:auto; }

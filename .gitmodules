@@ -1,0 +1,6 @@
+[submodule "repositories/odyssey-design"]
+	path = repositories/odyssey-design
+	url = https://github.com/odyssey-components/odyssey-design.git
+[submodule "repositories/odyssey-python"]
+	path = repositories/odyssey-python
+	url = https://github.com/odyssey-components/odyssey-python.git

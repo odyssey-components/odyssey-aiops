@@ -1,0 +1,4 @@
+FROM nginxinc/nginx-unprivileged:stable-alpine
+ENV NGINX_ENVSUBST_FILTER=^AIOPS_(PUBLIC|EXTERNAL)_HOST$
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+COPY dist /usr/share/nginx/html/aiops

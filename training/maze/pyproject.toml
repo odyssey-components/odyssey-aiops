@@ -1,0 +1,18 @@
+[project]
+name = "aiops-maze-training"
+version = "0.1.0"
+requires-python = "==3.14.*"
+dependencies = ["torch>=2.6", "onnx>=1.17", "odylab-training>=0.1.0"]
+
+[project.scripts]
+aiops-maze-train = "aiops_maze_training.runtime.train:main"
+aiops-maze-export = "aiops_maze_training.runtime.export:main"
+odymaze-train = "aiops_maze_training.runtime.train:main"
+odymaze-export = "aiops_maze_training.runtime.export:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.14"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "aiops_maze_training"

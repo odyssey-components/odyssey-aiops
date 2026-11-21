@@ -1,0 +1,85 @@
+import { root, product } from "../../scripts/workspace.mjs";
+// Actual WebGL camera/state checks with synthetic recorded poses, no pixel readback.
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
+import {createRequire} from 'node:module';
+import {join} from 'node:path';
+const web=join(product,'web');
+const {chromium,expect}=createRequire(join(root,'repositories/odyssey-design/packages/odyssey-web-testkit/package.json'))('@playwright/test');
+const server=spawn(join(web,'node_modules/.bin/vite'),['preview','--port','0'],{cwd:web,stdio:['ignore','pipe','inherit']});const closed=once(server,'close');
+let resolve;const ready=new Promise(value=>{resolve=value;});server.stdout.on('data',chunk=>{const found=String(chunk).match(/http:\/\/127\.0\.0\.1:\d+/);if(found)resolve(found[0]);});
+let browser;
+try {
+ const origin=await ready;browser=await chromium.launch({headless:true,args:['--enable-unsafe-swiftshader']});const page=await browser.newPage({viewport:{width:1440,height:1000}});
+ const errors=[],requests=[];page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>requests.push(request.url()));
+ let hasDepth=true;
+ const id='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+ const frames=Array.from({length:51},(_,i)=>({time:(i+1)/50,position_m:[i/50,i/25,.3],orientation_wxyz:[Math.cos(i/50*Math.PI/4),0,0,Math.sin(i/50*Math.PI/4)],joint_position_rad:Array.from({length:12},(_,j)=>j%3===0?0:j%3===1?.8:-1.6),episode_end:i===50}));
+ await page.route('**/api/**',route=>{
+  const url=new URL(route.request().url());
+  if(url.searchParams.has('recorded-depth')){
+   if(!hasDepth)return route.fulfill({status:404,json:{error:'无录制深度帧'}});
+   const bytes=Buffer.alloc(8+16*16*4*frames.length);bytes.writeUInt32LE(16);bytes.writeUInt32LE(16,4);
+   return route.fulfill({body:bytes,contentType:'application/octet-stream'});
+  }
+  if(url.searchParams.has('simulation-replay'))return route.fulfill({json:{frames}});
+  return route.fulfill({json:url.pathname.includes('/go1')?{tasks:[],scenes:[],simulations:[{id,title:'合成仿真',state:'succeeded'}],models:[],environment:null,activity:{active:null,queued:[]}}:[]});
+ });
+ await page.goto(`${origin}/?module=go1&go1Tab=replay&go1Simulation=${id}`);
+ const canvas=page.locator('.go1-viewport > canvas');await expect(canvas).toHaveAttribute('data-frame-time','0.02');
+ assert.ok(Number(await canvas.getAttribute('data-triangles'))>100000);
+ await canvas.evaluate(node=>{node.dataset.eyeTestIdentity='original';});
+ const toggle=page.getByRole('button',{name:'机器人眼睛',exact:true});
+ const close=(actual,expected)=>{actual.forEach((value,index)=>assert.ok(Math.abs(value-expected[index])<1e-8,`${actual} != ${expected}`));};
+ const replayRequests=()=>requests.filter(url=>url.includes('simulation-replay')).length;const count=replayRequests();
+ const orbit=JSON.parse(await canvas.getAttribute('data-camera-position'));
+ const checkInset=async ()=>{
+  const [x,y,width,height]=JSON.parse(await canvas.getAttribute('data-eyes-viewport'));
+  const box=await canvas.boundingBox();assert.ok(box);
+  assert.ok(Math.abs(box.width-x-width-12)<1);
+  assert.equal(y,12);
+  const depth=await page.getByRole('img',{name:'录制深度帧'}).boundingBox();assert.ok(depth);
+  assert.ok(Math.abs(depth.x-box.x-12)<2);
+  assert.ok(depth.x+depth.width<=box.x+x);
+  assert.ok(Math.abs(depth.y-(box.y+box.height-y-height))<2);
+  assert.ok(Math.abs(width/height-4/3)<.04);
+ };
+ await expect(canvas).toHaveAttribute('data-camera-mode','orbit');
+ await expect(canvas).toHaveAttribute('data-eyes-fov','65');
+ await expect(page.getByRole('img',{name:'录制深度帧'})).toHaveAttribute('data-depth-time','0.02');
+ await checkInset();
+ close(JSON.parse(await canvas.getAttribute('data-eyes-position')),[.3,0,.33]);
+ await toggle.click();await expect(canvas).not.toHaveAttribute('data-eyes-viewport');
+ const depthToggle=page.getByRole('button',{name:'深度帧',exact:true});
+ await expect(page.getByRole('img',{name:'录制深度帧'})).toBeVisible();
+ await depthToggle.click();
+ await expect(page.getByRole('img',{name:'录制深度帧'})).not.toBeVisible();
+ await toggle.click();await expect(canvas).toHaveAttribute('data-eye-test-identity','original');
+ await expect(page.getByRole('img',{name:'录制深度帧'})).not.toBeVisible();
+ await depthToggle.click();
+ await expect(page.getByRole('button',{name:'适配轨迹',exact:true})).toBeEnabled();
+ await page.getByRole('slider',{name:'评估回放位置',exact:true}).focus();await page.keyboard.press('End');await expect(canvas).toHaveAttribute('data-frame-time','1.02');
+ await expect(page.getByRole('img',{name:'录制深度帧'})).toHaveAttribute('data-depth-time','1.00');
+ close(JSON.parse(await canvas.getAttribute('data-eyes-position')),[1,2.3,.33]);
+ close(JSON.parse(await canvas.getAttribute('data-eyes-target')),[1,2.3+Math.cos(Math.PI/12),.33-Math.sin(Math.PI/12)]);
+ close(JSON.parse(await canvas.getAttribute('data-eyes-up')),[0,Math.sin(Math.PI/12),Math.cos(Math.PI/12)]);
+ await expect(canvas).toHaveAttribute('data-camera-mode','orbit');close(JSON.parse(await canvas.getAttribute('data-camera-position')),[orbit[0]+1,orbit[1]+2,orbit[2]]);
+ await expect(page.getByRole('button',{name:'跟随机器人',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'重置',exact:true}).click();await expect(canvas).toHaveAttribute('data-frame-time','0.02');
+ await page.getByRole('combobox',{name:'回放倍速',exact:true}).click();await page.getByRole('option',{name:'0.25×',exact:true}).click();
+ await page.getByRole('button',{name:'播放',exact:true}).click();await page.waitForFunction(()=>Number(document.querySelector('.go1-viewport > canvas')?.dataset.frameTime)>.15);await page.getByRole('button',{name:'暂停',exact:true}).click();
+ const paused=await canvas.getAttribute('data-frame-time');await page.waitForTimeout(120);assert.equal(await canvas.getAttribute('data-frame-time'),paused);
+ await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await checkInset();
+ await canvas.evaluate(node=>node.dispatchEvent(new Event('webglcontextlost',{cancelable:true})));await expect(page.getByRole('alert')).toContainText('图形上下文');
+ await page.getByRole('button',{name:'重新创建视图',exact:true}).click();await expect(canvas).toHaveAttribute('data-eyes-fov','65');await expect(canvas).toHaveAttribute('data-frame-time',paused);assert.ok(Number(await canvas.getAttribute('data-triangles'))>100000);
+ assert.equal(requests.filter(url=>url.includes('recorded-depth')).length,1,'scrubbing and toggling reuse the depth stream');
+ assert.equal(replayRequests(),count,'switching cameras never refetches the replay');
+ hasDepth=false;
+ await page.reload();
+ await expect(canvas).toHaveAttribute('data-eyes-fov','65');
+ await expect(depthToggle).toHaveCount(0);
+ await expect(page.locator('.go1-injected-inset')).toHaveCount(0);
+ await page.goto(origin+'/?module=go1');await expect(canvas).toHaveCount(0);assert.deepEqual(errors,[]);
+ console.log('PASS bottom-right inset, visibility toggle, body-relative camera/FOV/yaw, enabled observer controls, timeline/play/pause, no refetch/recreation, context recovery, narrow layout and unmount; no screenshots');
+} finally {await browser?.close();server.kill();await closed;}

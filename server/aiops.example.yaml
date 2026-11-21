@@ -1,0 +1,14 @@
+listen: 127.0.0.1:4176
+database:
+  host: 127.0.0.1
+  port: 5432
+  dbname: app
+  schema: aiops_go1
+  sslmode: disable
+  username: ""
+  password: ""
+silo:
+  endpoint: http://127.0.0.1:9000
+  bucket: aiops-go1
+  access_key: ""
+  secret_key: ""
